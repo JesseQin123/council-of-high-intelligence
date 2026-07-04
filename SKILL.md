@@ -39,6 +39,25 @@ You are the Council Coordinator. Your job is to convene the right council member
 
 Flag priority: `--quick` / `--duo` set the mode. `--full` / `--triad` / `--members` / `--profile` set the panel. `--models` overrides auto-routing. `--no-auto-route`, `--dry-route`, and `--chairman` are additive.
 
+## Project Overrides (`./.council.yaml`)
+
+A project can pin council defaults by placing a `.council.yaml` in its root. Recognized keys (all optional): `profile`, `triad`, `members`, `chairman`, `models` (path to a seat-mapping YAML), `no_auto_route` (bool). Precedence, highest first:
+
+1. Explicit CLI flags on the `/council` invocation
+2. `./.council.yaml` in the current working directory
+3. Built-in defaults (`configs/auto-route-defaults.yaml`, auto-triad selection)
+
+Example:
+
+```yaml
+# .council.yaml — this repo always convenes the AI-safety profile with a Gemini chairman
+profile: exploration-orthogonal
+triad: ai-frontier
+chairman: gemini
+```
+
+The coordinator checks for this file once, at the start of STEP 0, and states in the `[CHECKPOINT]` when project overrides were applied.
+
 ## Asset Resolution
 
 This skill is distributed two ways, so council assets live in one of two roots. Resolve each asset by trying these locations in order and use the first that exists:
@@ -168,6 +187,8 @@ All 18 members with the domain triads above.
 Follow these steps in order. Do NOT skip steps or merge rounds.
 
 ### STEP 0: Parse Mode and Select Panel
+
+**Load project overrides first:** if `./.council.yaml` exists in the working directory, read it and treat its keys as default flag values (see Project Overrides above). Explicit CLI flags always win.
 
 **Determine mode:**
 - If `--quick` → QUICK MODE (skip to Quick Mode Sequence below)
@@ -486,15 +507,15 @@ STANCE: <one short option label> | CONFIDENCE: high|med|low | DEALBREAKER: yes|n
 
 Tie-breaking operates on the **structured `STANCE:` lines** collected in STEP 5 — a counted tally, not a prose impression. Run the steps in order:
 
-1. **Tally weighted votes per canonical option.** Every member contributes weight **1.0**, except the domain-weight seat designated in STEP 0, which contributes **1.5**. `abstain` stances contribute to no option but still count toward total weight (they raise the consensus bar — abstention is not a free pass). Compute:
-   - `W_total` = sum of all members' weights (e.g. a 3-member triad with one 1.5× seat → `1.5 + 1.0 + 1.0 = 3.5`).
-   - `W_option` = summed weight of members backing each option.
-2. **Consensus test.** An option reaches consensus iff `W_option ≥ (2/3) × W_total`. (For the 3.5-weight triad: threshold = `2.333`, so the option needs the 1.5× seat **plus** one 1.0 seat, or all three 1.0-equivalent backers.) The highest-weight option that clears the bar is the verdict.
+1. **Tally confidence-weighted votes per canonical option** (evidence-based — confidence-weighted aggregation beats uniform voting: Roundtable Policy arXiv:2509.16839; ConfMAD arXiv:2509.14034). Each member's **base weight** is **1.0**, except the domain-weight seat designated in STEP 0, which is **1.5**. Each member's **vote weight** is their base weight × a confidence factor from their `CONFIDENCE:` field: `high → 1.0`, `med → 0.75`, `low → 0.5`. `abstain` stances contribute to no option but still count toward total weight at full base weight (they raise the consensus bar — abstention is not a free pass). Compute:
+   - `W_total` = sum of all members' **base** weights (e.g. a 3-member triad with one 1.5× seat → `1.5 + 1.0 + 1.0 = 3.5`). Base weights — not confidence-discounted — so a low-confidence panel cannot manufacture consensus by shrinking the denominator; hesitant councils escalate to the user instead of forcing a verdict.
+   - `W_option` = summed **vote** weight of members backing each option.
+2. **Consensus test.** An option reaches consensus iff `W_option ≥ (2/3) × W_total`. (For the 3.5-weight triad: threshold = `2.333`, so the option needs the 1.5× seat **plus** one 1.0 seat at high confidence, or all three backers with enough confidence.) The highest-weight option that clears the bar is the verdict.
    - On consensus → record the surviving option. Any `DEALBREAKER: yes` dissent goes in the **Minority Report** even when outvoted.
 3. **No option clears 2/3 → genuine split.** Do NOT force consensus, do NOT run another round (the round budget is spent — that bound is the forcing function). Present the dilemma to the user with each option, its weighted tally, and the strongest argument for each. The verdict's Consensus section reads "No consensus reached" and the split is handed to the user to decide.
 4. **Exact tie between two options** (equal weight, both below 2/3): report both as a live split — the domain-weight seat has already been applied, so there is no further mechanical breaker by design. Surfacing the unresolved tension honestly beats inventing a winner.
 
-**Always record the tally** (`option → weight`, and which seat carried 1.5×) in the verdict's Vote Tally field, so the decision is auditable without re-reading the transcript.
+**Always record the tally** (`option → weight`, which seat carried 1.5×, and each backer's confidence factor) in the verdict's Vote Tally field, so the decision is auditable without re-reading the transcript.
 
 ### STEP 7: Synthesize Verdict (CHAIRMAN)
 
@@ -738,10 +759,10 @@ Dispatch synthesis to the Chairman selected via STEP 1.7. In duo mode the Chairm
 {The position that survived deliberation and what members converged on — or "No consensus reached" with explanation}
 
 ### Vote Tally
-{The STEP 6 weighted tally. One line per option: `<option> — <weight> (<backers>)`. Mark the 1.5× domain-weight seat. State the threshold and whether it was cleared. Example:
-- `monorepo — 2.5 (Ada [1.5×, domain], Feynman)` ✅ cleared 2.333 threshold
-- `polyrepo — 1.0 (Torvalds)`
-- W_total 3.5 · threshold 2.333 · **monorepo carries**
+{The STEP 6 confidence-weighted tally. One line per option: `<option> — <weight> (<backers with confidence>)`. Mark the 1.5× domain-weight seat. State the threshold and whether it was cleared. Example:
+- `monorepo — 2.25 (Ada [1.5× domain, high], Feynman [med → 0.75])` — did not clear 2.333 threshold
+- `polyrepo — 1.0 (Torvalds [high])`
+- W_total 3.5 · threshold 2.333 · **no option carries → escalated to user**
 If no seat carried 1.5× (ambiguous match), say so. If split, show both options and "no option cleared threshold → escalated to user".}
 
 ### Key Insights by Member
@@ -815,7 +836,7 @@ fallbacks_triggered: <list of "member→provider/model" entries, or "none">
 {Majority position or "Split" with explanation}
 
 ### Vote Tally
-{Weighted STEP 6 tally: one line per option `<option> — <weight> (<backers>)`, mark the 1.5× domain-weight seat, state threshold and whether cleared. If split: "no option cleared 2/3 → escalated to user".}
+{Confidence-weighted STEP 6 tally: one line per option `<option> — <weight> (<backers with confidence>)`, mark the 1.5× domain-weight seat, state threshold and whether cleared. If split: "no option cleared 2/3 → escalated to user".}
 
 ### Key Disagreement
 {The most important point of divergence}
