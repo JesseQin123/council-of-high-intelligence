@@ -1,3 +1,9 @@
+> **Note from Jesse Qin:** This is a personal fork I keep for my own reference/use — I have not made any code contributions here. Full credit and all engineering work belongs to the original project below.
+>
+> **Original project:** https://github.com/0xNyk/council-of-high-intelligence
+>
+> ---
+
 # Council of High Intelligence
 
 <p align="center">
